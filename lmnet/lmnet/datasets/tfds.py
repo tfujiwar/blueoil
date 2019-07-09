@@ -61,6 +61,10 @@ class TFDSBase(Base):
             lambda record: _label_to_one_hot(record, self.num_classes),
             num_parallel_calls=tf.data.experimental.AUTOTUNE
         )
+        self.tf_dataset = self.tf_dataset.map(
+            lambda record: {'image': tf.image.resize(record['image'], [160, 160]), 'label': record['label']},
+            num_parallel_calls=tf.data.experimental.AUTOTUNE
+        )
 
     @property
     def num_per_epoch(self):

@@ -15,6 +15,8 @@
 # =============================================================================
 import os
 import math
+import tracemalloc
+import time
 
 import click
 import tensorflow as tf
@@ -44,6 +46,8 @@ def setup_dataset(config, subset, rank):
 
 
 def start_training(config):
+    tracemalloc.start()
+
     if config.IS_DISTRIBUTION:
         import horovod.tensorflow as hvd
         # initialize Horovod.
@@ -212,8 +216,20 @@ def start_training(config):
     else:
         max_steps = config.MAX_STEPS
 
+    print("=================")
+    print("start")
+    print("=================")
+    snapshot = tracemalloc.take_snapshot()
+    top_stats = snapshot.statistics('lineno')
+    for stat in top_stats[:10]:
+        print(stat)
+
     progbar = Progbar(max_steps)
     progbar.update(last_step)
+
+    feed_sum = 0
+    train_sum = 0
+
     for step in range(last_step, max_steps):
         if config.IS_DISTRIBUTION:
             # scatter dataset
@@ -225,6 +241,8 @@ def start_training(config):
                 # update each dataset by splited indices
                 train_dataset.update_dataset(feed_indices)
 
+        begin = time.time()
+
         images, labels = train_dataset.feed()
 
         feed_dict = {
@@ -232,6 +250,11 @@ def start_training(config):
             images_placeholder: images,
             labels_placeholder: labels,
         }
+
+        end = time.time()
+        feed_sum += end - begin
+
+        begin = time.time()
 
         if step * ((step + 1) % config.SUMMARISE_STEPS) == 0 and rank == 0:
             # Runtime statistics for develop.
@@ -256,6 +279,22 @@ def start_training(config):
             train_writer.add_summary(metrics_summary, step + 1)
         else:
             sess.run([train_op], feed_dict=feed_dict)
+
+        end = time.time()
+        train_sum += end - begin
+
+        if step * ((step + 1) % config.SUMMARISE_STEPS) == 0 and rank == 0:
+            print("=================")
+            print(step + 1)
+            print("feed  : {}".format(feed_sum / config.SUMMARISE_STEPS))
+            print("train : {}".format(train_sum / config.SUMMARISE_STEPS))
+            print("=================")
+            feed_sum = 0
+            train_sum = 0
+            snapshot = tracemalloc.take_snapshot()
+            top_stats = snapshot.statistics('lineno')
+            for stat in top_stats[:10]:
+                print(stat)
 
         to_be_saved = step == 0 or (step + 1) == max_steps or (step + 1) % config.SAVE_STEPS == 0
 
@@ -317,36 +356,36 @@ def start_training(config):
                 tf.train.write_graph(minimal_graph, environment.CHECKPOINTS_DIR, pb_name, as_text=False)
                 tf.train.write_graph(minimal_graph, environment.CHECKPOINTS_DIR, pbtxt_name, as_text=True)
 
-        if step == 0 or (step + 1) % config.TEST_STEPS == 0:
-            # init metrics values
-            sess.run(reset_metrics_op)
-            test_step_size = int(math.ceil(validation_dataset.num_per_epoch / config.BATCH_SIZE))
+        # if step == 0 or (step + 1) % config.TEST_STEPS == 0:
+        #     # init metrics values
+        #     sess.run(reset_metrics_op)
+        #     test_step_size = int(math.ceil(validation_dataset.num_per_epoch / config.BATCH_SIZE))
 
-            for test_step in range(test_step_size):
+        #     for test_step in range(test_step_size):
 
-                images, labels = validation_dataset.feed()
-                feed_dict = {
-                    is_training_placeholder: False,
-                    images_placeholder: images,
-                    labels_placeholder: labels,
-                }
+        #         images, labels = validation_dataset.feed()
+        #         feed_dict = {
+        #             is_training_placeholder: False,
+        #             images_placeholder: images,
+        #             labels_placeholder: labels,
+        #         }
 
-                if test_step % config.SUMMARISE_STEPS == 0:
-                    summary, _ = sess.run([summary_op, metrics_update_op], feed_dict=feed_dict)
-                    if rank == 0:
-                        val_writer.add_summary(summary, step + 1)
-                else:
-                    sess.run([metrics_update_op], feed_dict=feed_dict)
+        #         if test_step % config.SUMMARISE_STEPS == 0:
+        #             summary, _ = sess.run([summary_op, metrics_update_op], feed_dict=feed_dict)
+        #             if rank == 0:
+        #                 val_writer.add_summary(summary, step + 1)
+        #         else:
+        #             sess.run([metrics_update_op], feed_dict=feed_dict)
 
-            metrics_values = sess.run(list(metrics_ops_dict.values()))
-            metrics_feed_dict = {
-                placeholder: value for placeholder, value in zip(metrics_placeholders, metrics_values)
-            }
-            metrics_summary, = sess.run(
-                [metrics_summary_op], feed_dict=metrics_feed_dict,
-            )
-            if rank == 0:
-                val_writer.add_summary(metrics_summary, step + 1)
+        #     metrics_values = sess.run(list(metrics_ops_dict.values()))
+        #     metrics_feed_dict = {
+        #         placeholder: value for placeholder, value in zip(metrics_placeholders, metrics_values)
+        #     }
+        #     metrics_summary, = sess.run(
+        #         [metrics_summary_op], feed_dict=metrics_feed_dict,
+        #     )
+        #     if rank == 0:
+        #         val_writer.add_summary(metrics_summary, step + 1)
 
         progbar.update(step + 1)
     # training loop end.
