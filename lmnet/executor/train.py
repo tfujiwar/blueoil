@@ -224,8 +224,8 @@ def start_training(config):
     for stat in top_stats[:10]:
         print(stat)
 
-    progbar = Progbar(max_steps)
-    progbar.update(last_step)
+    # progbar = Progbar(max_steps)
+    # progbar.update(last_step)
 
     feed_sum = 0
     train_sum = 0
@@ -288,13 +288,13 @@ def start_training(config):
             print(step + 1)
             print("feed  : {}".format(feed_sum / config.SUMMARISE_STEPS))
             print("train : {}".format(train_sum / config.SUMMARISE_STEPS))
-            print("=================")
+            # print("=================")
             feed_sum = 0
             train_sum = 0
-            snapshot = tracemalloc.take_snapshot()
-            top_stats = snapshot.statistics('lineno')
-            for stat in top_stats[:10]:
-                print(stat)
+            # snapshot = tracemalloc.take_snapshot()
+            # top_stats = snapshot.statistics('lineno')
+            # for stat in top_stats[:10]:
+            #     print(stat)
 
         to_be_saved = step == 0 or (step + 1) == max_steps or (step + 1) % config.SAVE_STEPS == 0
 
@@ -387,7 +387,7 @@ def start_training(config):
         #     if rank == 0:
         #         val_writer.add_summary(metrics_summary, step + 1)
 
-        progbar.update(step + 1)
+        # progbar.update(step + 1)
     # training loop end.
     print("Done")
 

@@ -204,7 +204,6 @@ class _TFDSReader:
     def __init__(self, dataset):
         tf_dataset = dataset.tf_dataset.shuffle(1024) \
                                        .repeat() \
-                                       # .batch(dataset.batch_size) \
                                        .prefetch(tf.data.experimental.AUTOTUNE)
 
         iterator = tf.data.make_initializable_iterator(tf_dataset)
