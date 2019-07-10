@@ -204,7 +204,7 @@ class _TFDSReader:
     def __init__(self, dataset):
         tf_dataset = dataset.tf_dataset.shuffle(1024) \
                                        .repeat() \
-                                       .batch(dataset.batch_size) \
+                                       # .batch(dataset.batch_size) \
                                        .prefetch(tf.data.experimental.AUTOTUNE)
 
         iterator = tf.data.make_initializable_iterator(tf_dataset)
@@ -217,9 +217,13 @@ class _TFDSReader:
     def read(self):
         """Return batch size data."""
         result = []
-        batch = self.session.run(self.next_batch)
-        for image, label in zip(batch['image'], batch['label']):
-            image, label = _apply_augmentations(self.dataset, image, label)
+        # batch = self.session.run(self.next_batch)
+        # for image, label in zip(batch['image'], batch['label']):
+        #     image, label = _apply_augmentations(self.dataset, image, label)
+        #     result.append((image, label))
+        for i in range(self.dataset.batch_size):
+            record = self.session.run(self.next_batch)
+            image, label = _apply_augmentations(self.dataset, record['image'], record['label'])
             result.append((image, label))
         return _concat_data(result)
 
