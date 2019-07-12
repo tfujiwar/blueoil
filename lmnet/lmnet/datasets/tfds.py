@@ -40,6 +40,7 @@ class TFDSBase(Base):
             tfds_name,
             tfds_data_dir,
             tfds_download=False,
+            tfds_image_size=None,
             *args,
             **kwargs
     ):
@@ -61,10 +62,12 @@ class TFDSBase(Base):
             lambda record: _label_to_one_hot(record, self.num_classes),
             num_parallel_calls=tf.data.experimental.AUTOTUNE
         )
-        self.tf_dataset = self.tf_dataset.map(
-            lambda record: {'image': tf.image.resize(record['image'], [160, 160]), 'label': record['label']},
-            num_parallel_calls=tf.data.experimental.AUTOTUNE
-        )
+
+        if tfds_image_size is not None:
+            self.tf_dataset = self.tf_dataset.map(
+                lambda record: {'image': tf.image.resize(record['image'], tfds_image_size), 'label': record['label']},
+                num_parallel_calls=tf.data.experimental.AUTOTUNE
+            )
 
     @property
     def num_per_epoch(self):
