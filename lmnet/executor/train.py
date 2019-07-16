@@ -283,12 +283,16 @@ def start_training(config):
         end = time.time()
         train_sum += end - begin
 
+        # print("{}, {}, {}".format(step, feed_sum, train_sum))
+        # feed_sum = 0
+        # train_sum = 0
+
         if step * ((step + 1) % config.SUMMARISE_STEPS) == 0 and rank == 0:
             print("=================")
             print(step + 1)
             print("feed  : {}".format(feed_sum / config.SUMMARISE_STEPS))
             print("train : {}".format(train_sum / config.SUMMARISE_STEPS))
-            # print("=================")
+            print("=================")
             feed_sum = 0
             train_sum = 0
             # snapshot = tracemalloc.take_snapshot()
