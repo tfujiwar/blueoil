@@ -76,6 +76,11 @@ def _process_one_data(i):
     return _apply_augmentations(_dataset, image, label)
 
 
+def _process_one_record(record):
+    image, label = record
+    return _apply_augmentations(_dataset, image, label)
+
+
 def _concat_data(data_list):
     images, labels = zip(*data_list)
     images = np.array(images)
@@ -168,6 +173,69 @@ class _MultiProcessDatasetPrefetchThread(threading.Thread):
             self.pool.join()
 
 
+class _MultiProcessTFDSPrefetchThread(threading.Thread):
+    def __init__(self, dataset, result_queue, seed):
+        super().__init__()
+
+        tf_dataset = dataset.tf_dataset.shuffle(buffer_size=1024, seed=seed) \
+                                       .repeat() \
+                                       .batch(dataset.batch_size) \
+                                       .prefetch(tf.data.experimental.AUTOTUNE)
+
+        iterator = tf.data.make_initializable_iterator(tf_dataset)
+
+        self.dataset = dataset
+        self.session = tf.Session()
+        self.session.run(iterator.initializer)
+        self.next_batch = iterator.get_next()
+
+        self.seed = seed
+        self.pool = Pool(processes=8, initializer=_prefetch_setup,
+                         initargs=(dataset, self.seed, False))
+        self.result_queue = result_queue
+        self.batch_size = dataset.batch_size
+        self.dataset = dataset
+        self.terminate = False
+        self.setDaemon(True)
+
+    def refresh_pool(self):
+        self.pool.close()
+        self.pool = Pool(processes=8, initializer=_prefetch_setup,
+                         initargs=(self.dataset, self.seed, False))
+
+    def loop_body(self):
+        batch = self.session.run(self.next_batch)
+        batch = zip(batch['image'], batch['label'])
+        proceeded = self.pool.map(_process_one_record, batch)
+        proceeded = _concat_data(proceeded)
+
+        put_ok = False
+        while not put_ok:
+            try:
+                self.result_queue.put(proceeded)
+                put_ok = True
+            except queue.Full:
+                if self.terminate:
+                    break
+
+    def run(self):
+        count = 0
+        try:
+            while True:
+                if count == 1000:
+                    self.refresh_pool()
+                    count = 0
+                if self.terminate:
+                    print("break")
+                    break
+
+                self.loop_body()
+
+                count += 1
+        finally:
+            self.pool.close()
+            self.pool.join()
+
 class _SimpleDatasetReader:
 
     def __init__(self, dataset, seed, shuffle=True):
@@ -201,8 +269,8 @@ class _SimpleDatasetReader:
 
 class _TFDSReader:
 
-    def __init__(self, dataset):
-        tf_dataset = dataset.tf_dataset.shuffle(1024) \
+    def __init__(self, dataset, seed, shuffle=True):
+        tf_dataset = dataset.tf_dataset.shuffle(buffer_size=1024, seed=seed) \
                                        .repeat() \
                                        .batch(dataset.batch_size) \
                                        .prefetch(tf.data.experimental.AUTOTUNE)
@@ -235,17 +303,20 @@ class DatasetIterator:
         self.seed = seed
 
         if issubclass(dataset.__class__, TFDSBase):
-            self.enable_prefetch = False
-            self.reader = _TFDSReader(self.dataset)
+            reader_class = _TFDSReader
+            prefetcher_class = _MultiProcessTFDSPrefetchThread
         else:
-            if self.enable_prefetch:
-                self.prefetch_result_queue = queue.Queue(maxsize=200)
-                self.prefetcher = _MultiProcessDatasetPrefetchThread(self.dataset, self.prefetch_result_queue, seed)
-                self.prefetcher.start()
-                print("ENABLE prefetch")
-            else:
-                self.reader = _SimpleDatasetReader(self.dataset, seed)
-                print("DISABLE prefetch")
+            reader_class = _SimpleDatasetReader
+            prefetcher_class = _MultiProcessDatasetPrefetchThread
+
+        if self.enable_prefetch:
+            self.prefetch_result_queue = queue.Queue(maxsize=200)
+            self.prefetcher = prefetcher_class(self.dataset, self.prefetch_result_queue, seed)
+            self.prefetcher.start()
+            print("ENABLE prefetch")
+        else:
+            self.reader = reader_class(self.dataset, seed)
+            print("DISABLE prefetch")
 
     @property
     def num_per_epoch(self):
@@ -308,15 +379,15 @@ if __name__ == '__main__':
     from lmnet.data_processor import Sequence
     from lmnet.data_augmentor import FlipLeftRight, Hue, Blur
 
-    cifar10 = Cifar10()
-
     augmentor = Sequence([
         FlipLeftRight(0.5),
         Hue((-10, 10)),
         Blur(),
     ])
 
-    dataset_iterator = DatasetIterator(dataset=cifar10, enable_prefetch=True, augmentor=augmentor)
+    cifar10 = Cifar10(augmentor=augmentor)
+
+    dataset_iterator = DatasetIterator(dataset=cifar10, enable_prefetch=True)
     time.sleep(2)
     import time
     t0 = time.time()
@@ -324,7 +395,7 @@ if __name__ == '__main__':
     t1 = time.time()
     print("time of prefetch: {}".format(t1 - t0))
 
-    dataset_iterator2 = DatasetIterator(dataset=cifar10, enable_prefetch=False, augmentor=augmentor)
+    dataset_iterator2 = DatasetIterator(dataset=cifar10, enable_prefetch=False)
     t0 = time.time()
     data_batch = next(dataset_iterator2)
     t1 = time.time()
